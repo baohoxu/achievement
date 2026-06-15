@@ -1,10 +1,12 @@
 const app = document.getElementById("app");
 
-const STORAGE_KEY = "achievement-box.records.v02";
 const DRAFT_KEY = "achievement-box.draft.v02";
 const LAST_RECORD_KEY = "achievement-box.last-record.v02";
+const API_BASE = window.ACHIEVEMENT_API_BASE || getDefaultApiBase();
 
 const CATEGORIES = ["学习/工作", "生活自律", "情绪管理", "人际关系", "小幸运"];
+const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+const AUTH_ROUTES = ["login", "register"];
 
 const FEEDBACK_MESSAGES = [
   "每一次开始，都是未来的伏笔。",
@@ -22,13 +24,32 @@ const SUCCESS_MESSAGES = [
   "这不是普通的一条记录，是你给自己的温柔确认。"
 ];
 
+function getDefaultApiBase() {
+  const { protocol, hostname } = window.location;
+  if ((protocol === "http:" || protocol === "https:") && (hostname === "localhost" || hostname === "127.0.0.1")) {
+    return `${protocol}//${hostname}:8000`;
+  }
+  return "http://127.0.0.1:8000";
+}
+
 const state = {
   route: getRoute(),
   formMessage: "",
   historyFilter: "全部",
   dateMenuOpen: false,
+  calendarMonth: "",
   highlightedDate: "",
-  reviewRecordId: null
+  reviewRecordId: null,
+  detailBackRoute: "",
+  currentUser: null,
+  authChecked: false,
+  authMode: "login",
+  authMessage: "",
+  authBusy: false,
+  records: [],
+  recordsLoading: false,
+  dataMessage: "",
+  lastRecordId: localStorage.getItem(LAST_RECORD_KEY) || ""
 };
 
 if ("scrollRestoration" in history) {
@@ -54,6 +75,7 @@ function icon(name, className = "icon") {
     notebook: `<svg viewBox="0 0 24 24" ${common}><path d="M8 4h10a2 2 0 0 1 2 2v16H8a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z"/><path d="M8 4v18"/><path d="M4.7 9H8"/><path d="M4.7 14H8"/></svg>`,
     edit: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 17.7 4 21l3.3-1 11-11-3.2-3.2z"/><path d="m16.2 4.7 1.2-1.2a1.8 1.8 0 0 1 2.5 0l.6.6a1.8 1.8 0 0 1 0 2.5l-1.2 1.2z"/></svg>`,
     clock: `<svg viewBox="0 0 24 24" ${common}><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3.2 2"/></svg>`,
+    back: `<svg viewBox="0 0 24 24" ${common}><path d="M19 12H5"/><path d="m12 5-7 7 7 7"/></svg>`,
     chevron: `<svg viewBox="0 0 24 24" ${common}><path d="m9 5 7 7-7 7"/></svg>`,
     down: `<svg viewBox="0 0 24 24" ${common}><path d="m6 9 6 6 6-6"/></svg>`,
     check: `<svg viewBox="0 0 24 24" ${common}><path d="m5 12 4.5 4.5L19 7"/></svg>`,
@@ -92,57 +114,123 @@ function localDateTimeString(date) {
 }
 
 function enrichRecord(record) {
-  const date = new Date(record.createdAt);
+  const createdAt = String(record.createdAt || record.created_at || localDateTimeString(new Date())).slice(0, 19);
+  const date = new Date(createdAt);
   return {
-    id: record.id || `record_${date.getTime()}_${Math.random().toString(16).slice(2, 7)}`,
+    id: String(record.id || `record_${date.getTime()}_${Math.random().toString(16).slice(2, 7)}`),
     content: record.content,
     category: record.category,
-    createdAt: record.createdAt,
+    createdAt,
     date: dateKey(date),
     month: monthKey(date),
     year: String(date.getFullYear())
   };
 }
 
-function seedRecords() {
-  return [
-    ["坚持读完了 30 分钟的书", "学习/工作", "2026-06-08T21:30:00"],
-    ["完成了一次 5 公里的慢跑", "生活自律", "2026-06-08T07:45:00"],
-    ["学会了一道新菜，味道很棒", "生活自律", "2026-06-07T19:20:00"],
-    ["今天开始整理产品想法了", "学习/工作", "2026-06-06T15:30:00"],
-    ["没有因为小事一直内耗", "情绪管理", "2026-06-05T22:05:00"],
-    ["主动和朋友说出了真实想法", "人际关系", "2026-06-04T20:10:00"],
-    ["读完了一篇很难的论文", "学习/工作", "2026-06-03T13:20:00"],
-    ["早起给自己做了早餐", "生活自律", "2026-06-02T09:40:00"],
-    ["主动和同事沟通了想法", "人际关系", "2026-05-27T15:10:00"],
-    ["情绪稳定，没有因为小事内耗", "情绪管理", "2026-05-26T22:05:00"],
-    ["遇到一件小幸运的事", "小幸运", "2026-05-25T18:40:00"],
-    ["我通过了水测啊啊啊", "学习/工作", "2026-05-23T20:10:00"]
-  ].map(([content, category, createdAt], index) =>
-    enrichRecord({ id: `seed_${index + 1}`, content, category, createdAt })
-  );
-}
-
-function ensureSeedRecords() {
-  if (!localStorage.getItem(STORAGE_KEY)) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(seedRecords()));
-  }
-}
-
 function loadRecords() {
-  ensureSeedRecords();
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
-    return parsed
-      .map(enrichRecord)
-      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  } catch {
-    return [];
-  }
+  return state.records;
 }
 
-function saveRecords(records) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records.map(enrichRecord)));
+function setRecords(records) {
+  state.records = records
+    .map(enrichRecord)
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function setCurrentUser(user) {
+  state.currentUser = user
+    ? {
+        id: String(user.id),
+        username: user.username,
+        nickname: user.nickname || ""
+      }
+    : null;
+}
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    const error = new Error(data.detail || "请求失败，请稍后再试。");
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+async function getCurrentUser() {
+  const data = await apiFetch("/api/auth/me");
+  return data.user;
+}
+
+async function login(username, password) {
+  const data = await apiFetch("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password })
+  });
+  return data.user;
+}
+
+async function register(username, password, nickname) {
+  const data = await apiFetch("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ username, password, nickname })
+  });
+  return data.user;
+}
+
+async function logout() {
+  await apiFetch("/api/auth/logout", { method: "POST" });
+}
+
+async function fetchAchievements(category = "") {
+  const query = category && category !== "全部" ? `?category=${encodeURIComponent(category)}` : "";
+  const data = await apiFetch(`/api/achievements${query}`);
+  return data.records || [];
+}
+
+async function createAchievement(payload) {
+  const data = await apiFetch("/api/achievements", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  return data.record;
+}
+
+async function fetchAchievementDetail(id) {
+  const data = await apiFetch(`/api/achievements/${encodeURIComponent(id)}`);
+  return data.record;
+}
+
+async function refreshRecords() {
+  if (!state.currentUser) {
+    setRecords([]);
+    return;
+  }
+  state.recordsLoading = true;
+  state.dataMessage = "";
+  try {
+    setRecords(await fetchAchievements());
+  } catch (error) {
+    if (error.status === 401) {
+      setCurrentUser(null);
+      setRecords([]);
+      state.authMessage = "登录已失效，请重新登录。";
+      navigate("login");
+    } else {
+      state.dataMessage = error.message;
+    }
+  } finally {
+    state.recordsLoading = false;
+  }
 }
 
 function loadDraft() {
@@ -180,20 +268,45 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function getRoute() {
+function getRoutePath() {
   const route = location.hash.replace(/^#\/?/, "") || "home";
-  return ["home", "record", "completion", "history", "review", "badges"].includes(route) ? route : "home";
+  return route.replace(/^\/+/, "") || "home";
+}
+
+function getRoute() {
+  const [route] = getRoutePath().split("/");
+  if (route === "detail" && getDetailRecordId()) return "detail";
+  return ["home", "record", "completion", "history", "review", "badges", "login", "register"].includes(route) ? route : "home";
+}
+
+function getDetailRecordId() {
+  const [route, ...parts] = getRoutePath().split("/");
+  if (route !== "detail" || !parts.length) return "";
+  try {
+    return decodeURIComponent(parts.join("/"));
+  } catch {
+    return "";
+  }
 }
 
 function navigate(route) {
   state.dateMenuOpen = false;
-  if (getRoute() === route) {
-    state.route = route;
+  if (getRoutePath() === route) {
+    state.route = getRoute();
     render();
     scrollToPageTop();
     return;
   }
   location.hash = `/${route}`;
+}
+
+function isAuthRoute(route) {
+  return AUTH_ROUTES.includes(route);
+}
+
+function displayUserName() {
+  if (!state.currentUser) return "";
+  return state.currentUser.nickname || state.currentUser.username;
 }
 
 function scrollToPageTop() {
@@ -240,6 +353,85 @@ function groupByDate(records) {
     groups[record.date].push(record);
     return groups;
   }, {});
+}
+
+function compareMonth(monthA, monthB) {
+  return monthA.localeCompare(monthB);
+}
+
+function monthLabel(month) {
+  const [year, monthNumber] = month.split("-");
+  return `${year}年${monthNumber}月`;
+}
+
+function shiftMonth(month, offset) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return monthKey(new Date(year, monthNumber - 1 + offset, 1));
+}
+
+function daysInMonth(month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Date(year, monthNumber, 0).getDate();
+}
+
+function firstWeekdayOfMonth(month) {
+  const [year, monthNumber] = month.split("-").map(Number);
+  return new Date(year, monthNumber - 1, 1).getDay();
+}
+
+function normalizeCalendarMonth(dates) {
+  const months = [...new Set(dates.map((date) => date.slice(0, 7)))].sort();
+  if (!months.length) {
+    state.calendarMonth = "";
+    return {
+      currentMonth: "",
+      minMonth: "",
+      maxMonth: ""
+    };
+  }
+
+  const minMonth = months[0];
+  const maxMonth = months[months.length - 1];
+  if (!state.calendarMonth || compareMonth(state.calendarMonth, minMonth) < 0 || compareMonth(state.calendarMonth, maxMonth) > 0) {
+    state.calendarMonth = maxMonth;
+  }
+
+  return {
+    currentMonth: state.calendarMonth,
+    minMonth,
+    maxMonth
+  };
+}
+
+function renderCalendarMonth(month, groups) {
+  if (!month) return "";
+  const blanks = Array.from({ length: firstWeekdayOfMonth(month) }, () => `<span class="calendar-empty" aria-hidden="true"></span>`).join("");
+  const days = Array.from({ length: daysInMonth(month) }, (_, index) => {
+    const day = index + 1;
+    const date = `${month}-${pad(day)}`;
+    const count = groups[date]?.length || 0;
+    const isSelected = state.highlightedDate === date;
+    return `
+      <button
+        class="calendar-day ${count ? "has-record" : "is-disabled"} ${isSelected ? "is-selected" : ""}"
+        ${count ? `data-date-option="${date}"` : "disabled"}
+        type="button"
+        aria-label="${monthLabel(month)}${day}日${count ? `，${count}件记录` : "，没有记录"}"
+      >
+        <span>${day}</span>
+        <small>${count ? `${count}件` : ""}</small>
+      </button>
+    `;
+  }).join("");
+
+  return `
+    <div class="calendar-weekdays" aria-hidden="true">
+      ${WEEKDAYS.map((day) => `<span>${day}</span>`).join("")}
+    </div>
+    <div class="calendar-grid">
+      ${blanks}${days}
+    </div>
+  `;
 }
 
 function currentMonthStats(records) {
@@ -358,13 +550,24 @@ function pageHeader(title, kicker, dark = false) {
         <h1 class="page-title">${title}</h1>
         <p class="page-kicker">${kicker}</p>
       </div>
-      <div class="avatar ${dark ? "is-dark" : ""}">${icon("user")}</div>
+      ${
+        state.currentUser
+          ? `
+            <div class="user-area">
+              <span class="user-name">${escapeHtml(displayUserName())}</span>
+              <button class="avatar ${dark ? "is-dark" : ""}" data-action="logout" type="button" aria-label="退出登录" title="退出登录">
+                ${icon("user")}
+              </button>
+            </div>
+          `
+          : `<button class="avatar ${dark ? "is-dark" : ""}" data-route="login" type="button" aria-label="登录">${icon("user")}</button>`
+      }
     </header>
   `;
 }
 
 function nav(active) {
-  const activeRoute = active === "completion" ? "home" : active === "badges" ? "review" : active;
+  const activeRoute = active === "completion" ? "home" : active === "badges" ? "review" : active === "detail" ? "history" : active;
   const items = [
     ["home", "home", "首页"],
     ["record", "plus", "记录"],
@@ -384,6 +587,61 @@ function nav(active) {
         )
         .join("")}
     </nav>
+  `;
+}
+
+function renderLoadingPage() {
+  return `
+    <section class="page auth-page">
+      ${pageHeader("成就盒子", "正在连接你的成就数据")}
+      <section class="card auth-card">
+        <div class="loading-state">
+          <span class="round-icon">${icon("clock")}</span>
+          <p>加载中...</p>
+        </div>
+      </section>
+    </section>
+  `;
+}
+
+function renderAuthPage(mode = "login") {
+  const isRegister = mode === "register";
+  state.authMode = mode;
+  return `
+    <section class="page auth-page">
+      ${pageHeader("成就盒子", isRegister ? "创建账号，开始收藏自己的小成就" : "登录账号，继续回看你的闪光时刻")}
+      <section class="card auth-card">
+        ${state.authMessage ? `<p class="toast">${escapeHtml(state.authMessage)}</p>` : ""}
+        <div class="auth-tabs" role="tablist" aria-label="账号操作">
+          <button class="pill ${!isRegister ? "is-active" : ""}" data-route="login" type="button" role="tab" aria-selected="${!isRegister}">登录</button>
+          <button class="pill ${isRegister ? "is-active" : ""}" data-route="register" type="button" role="tab" aria-selected="${isRegister}">注册</button>
+        </div>
+        <div class="auth-fields">
+          <label class="auth-field">
+            <span>账号</span>
+            <input data-auth-field="username" autocomplete="username" maxlength="40" placeholder="3-40 位字母、数字或下划线" />
+          </label>
+          ${
+            isRegister
+              ? `
+                <label class="auth-field">
+                  <span>昵称</span>
+                  <input data-auth-field="nickname" autocomplete="nickname" maxlength="40" placeholder="可以之后再想" />
+                </label>
+              `
+              : ""
+          }
+          <label class="auth-field">
+            <span>密码</span>
+            <input data-auth-field="password" autocomplete="${isRegister ? "new-password" : "current-password"}" type="password" maxlength="72" placeholder="至少 6 位" />
+          </label>
+        </div>
+        <button class="primary-btn" data-action="auth-submit" type="button" ${state.authBusy ? "disabled" : ""}>
+          ${icon(isRegister ? "plus" : "user")}
+          <span>${state.authBusy ? "处理中..." : isRegister ? "注册并登录" : "登录"}</span>
+        </button>
+      </section>
+    </section>
   `;
 }
 
@@ -422,11 +680,11 @@ function renderRecordRows(records, limit = records.length) {
         .slice(0, limit)
         .map(
           (record) => `
-            <div class="record-row">
+            <button class="record-row" data-route="detail/${encodeURIComponent(record.id)}" type="button">
               ${roundCategoryIcon(record.category)}
               <div class="record-content" title="${escapeHtml(record.content)}">${escapeHtml(record.content)}</div>
               <div class="record-time">${relativeTime(record)}</div>
-            </div>
+            </button>
           `
         )
         .join("")}
@@ -439,6 +697,7 @@ function renderHome(records) {
   return `
     <section class="page">
       ${pageHeader("成就盒子", "记录每一件值得庆祝的小事")}
+      ${state.dataMessage ? `<p class="toast">${escapeHtml(state.dataMessage)}</p>` : ""}
 
       <section class="card hero-card">
         <span class="tag-string" aria-hidden="true"></span>
@@ -525,7 +784,7 @@ function renderRecordPage() {
 }
 
 function renderCompletion(records) {
-  const lastId = localStorage.getItem(LAST_RECORD_KEY);
+  const lastId = state.lastRecordId || localStorage.getItem(LAST_RECORD_KEY);
   const record = records.find((item) => item.id === lastId) || records[0];
   return `
     <section class="page">
@@ -584,6 +843,9 @@ function renderHistory(records) {
     : records.filter((record) => record.category === state.historyFilter);
   const groups = groupByDate(filtered);
   const dates = Object.keys(groups).sort((a, b) => new Date(`${b}T00:00:00`) - new Date(`${a}T00:00:00`));
+  const { currentMonth, minMonth, maxMonth } = normalizeCalendarMonth(dates);
+  const canGoPrevMonth = currentMonth && compareMonth(currentMonth, minMonth) > 0;
+  const canGoNextMonth = currentMonth && compareMonth(currentMonth, maxMonth) < 0;
 
   return `
     <section class="page">
@@ -606,16 +868,23 @@ function renderHistory(records) {
             <span>按日期定位</span>
             ${icon("down")}
           </button>
-          <div class="date-menu ${state.dateMenuOpen ? "is-open" : ""}" role="menu">
-            ${dates
-              .map(
-                (date) => `
-                  <button class="date-option" data-date-option="${date}" type="button" role="menuitem">
-                    ${displayDate(date)} · ${groups[date].length} 件
-                  </button>
+          <div class="date-menu ${state.dateMenuOpen ? "is-open" : ""}" role="dialog" aria-label="日期定位月历">
+            ${
+              currentMonth
+                ? `
+                  <div class="calendar-header">
+                    <button class="calendar-nav" data-action="calendar-prev-month" type="button" aria-label="上个月" ${canGoPrevMonth ? "" : "disabled"}>
+                      ${icon("back")}
+                    </button>
+                    <strong>${monthLabel(currentMonth)}</strong>
+                    <button class="calendar-nav" data-action="calendar-next-month" type="button" aria-label="下个月" ${canGoNextMonth ? "" : "disabled"}>
+                      ${icon("chevron")}
+                    </button>
+                  </div>
+                  ${renderCalendarMonth(currentMonth, groups)}
                 `
-              )
-              .join("")}
+                : `<div class="calendar-empty-note">还没有可以定位的日期。</div>`
+            }
           </div>
         </div>
       </div>
@@ -633,14 +902,16 @@ function renderHistory(records) {
                         .map(
                           (record) => `
                             <article class="history-item">
-                              ${roundCategoryIcon(record.category)}
-                              <div class="history-main">
-                                <p class="history-content" title="${escapeHtml(record.content)}">${escapeHtml(record.content)}</p>
-                              </div>
-                              <div class="history-meta">
-                                <span class="category-badge">${record.category}</span>
-                                <span class="record-time">${timeOf(record)}</span>
-                              </div>
+                              <button class="history-link" data-route="detail/${encodeURIComponent(record.id)}" type="button">
+                                ${roundCategoryIcon(record.category)}
+                                <span class="history-main">
+                                  <span class="history-content" title="${escapeHtml(record.content)}">${escapeHtml(record.content)}</span>
+                                </span>
+                                <span class="history-meta">
+                                  <span class="category-badge">${record.category}</span>
+                                  <span class="record-time">${timeOf(record)}</span>
+                                </span>
+                              </button>
                             </article>
                           `
                         )
@@ -655,6 +926,63 @@ function renderHistory(records) {
       }
     </section>
     ${nav("history")}
+  `;
+}
+
+function renderRecordDetail(records) {
+  const recordId = getDetailRecordId();
+  const record = records.find((item) => item.id === recordId);
+  return `
+    <section class="page">
+      <div class="detail-topbar">
+        <button class="back-button" data-action="detail-back" type="button">
+          ${icon("back")}
+          <span>返回</span>
+        </button>
+      </div>
+      ${pageHeader("成就详情", "完整看见这件值得庆祝的小事")}
+      ${
+        record
+          ? `
+            <article class="card detail-card">
+              <div class="detail-heading">
+                ${roundCategoryIcon(record.category)}
+                <div>
+                  <p class="detail-kicker">${record.category}</p>
+                  <h2 class="detail-title">这是一件值得庆祝的小事</h2>
+                </div>
+              </div>
+              <p class="detail-content">${escapeHtml(record.content)}</p>
+              <div class="detail-meta-grid">
+                <div class="detail-meta-item">
+                  <span>记录日期</span>
+                  <strong>${displayDate(record.date)}</strong>
+                </div>
+                <div class="detail-meta-item">
+                  <span>记录时间</span>
+                  <strong>${timeOf(record)}</strong>
+                </div>
+                <div class="detail-meta-item is-wide">
+                  <span>完整时间</span>
+                  <strong>${displayDateShort(record.date)} ${timeOf(record)}</strong>
+                </div>
+              </div>
+            </article>
+          `
+          : `
+            <section class="card detail-empty-card">
+              <span class="round-icon">${icon("notebook")}</span>
+              <h2>没有找到这条记录</h2>
+              <p>它可能已经不在当前设备的记录里了。</p>
+              <button class="primary-btn" data-route="history" type="button">
+                ${icon("list")}
+                <span>回到历史记录</span>
+              </button>
+            </section>
+          `
+      }
+    </section>
+    ${nav("detail")}
   `;
 }
 
@@ -755,15 +1083,30 @@ function renderBadgesPage(records) {
 }
 
 function render() {
-  const records = loadRecords();
   state.route = getRoute();
+  if (!state.authChecked) {
+    app.innerHTML = renderLoadingPage();
+    return;
+  }
+  if (!state.currentUser && !isAuthRoute(state.route)) {
+    app.innerHTML = renderAuthPage("login");
+    return;
+  }
+  if (state.currentUser && isAuthRoute(state.route)) {
+    navigate("home");
+    return;
+  }
+  const records = loadRecords();
   const pages = {
     home: () => renderHome(records),
     record: () => renderRecordPage(),
     completion: () => renderCompletion(records),
     history: () => renderHistory(records),
+    detail: () => renderRecordDetail(records),
     review: () => renderReview(records),
-    badges: () => renderBadgesPage(records)
+    badges: () => renderBadgesPage(records),
+    login: () => renderAuthPage("login"),
+    register: () => renderAuthPage("register")
   };
   app.innerHTML = pages[state.route]();
 }
@@ -780,7 +1123,7 @@ function updateDraftFromForm(extra = {}) {
   return next;
 }
 
-function handleSaveRecord() {
+async function handleSaveRecord() {
   const draft = updateDraftFromForm();
   const content = draft.content.trim();
   if (!content) {
@@ -793,24 +1136,92 @@ function handleSaveRecord() {
     render();
     return;
   }
-  const now = new Date();
-  const record = enrichRecord({
-    content,
-    category: draft.category || CATEGORIES[0],
-    createdAt: localDateTimeString(now)
-  });
-  const records = loadRecords();
-  saveRecords([record, ...records]);
-  localStorage.setItem(LAST_RECORD_KEY, record.id);
-  clearDraft();
-  state.formMessage = "";
-  navigate("completion");
+  try {
+    const record = enrichRecord(await createAchievement({ content, category: draft.category || CATEGORIES[0] }));
+    setRecords([record, ...state.records]);
+    state.lastRecordId = record.id;
+    localStorage.setItem(LAST_RECORD_KEY, record.id);
+    clearDraft();
+    state.formMessage = "";
+    navigate("completion");
+  } catch (error) {
+    if (error.status === 401) {
+      setCurrentUser(null);
+      setRecords([]);
+      state.authMessage = "登录已失效，请重新登录。";
+      navigate("login");
+      return;
+    }
+    state.formMessage = error.message;
+    render();
+  }
 }
 
-function handleClick(event) {
+function getAuthField(name) {
+  return app.querySelector(`[data-auth-field="${name}"]`)?.value.trim() || "";
+}
+
+async function handleAuthSubmit() {
+  const mode = state.route === "register" ? "register" : "login";
+  const username = getAuthField("username");
+  const password = getAuthField("password");
+  const nickname = getAuthField("nickname");
+  state.authMessage = "";
+
+  if (!username || !password) {
+    state.authMessage = "请填写账号和密码。";
+    render();
+    return;
+  }
+
+  state.authBusy = true;
+  render();
+  let succeeded = false;
+  try {
+    const user = mode === "register"
+      ? await register(username, password, nickname)
+      : await login(username, password);
+    setCurrentUser(user);
+    await refreshRecords();
+    state.authMessage = "";
+    succeeded = true;
+    navigate("home");
+  } catch (error) {
+    state.authMessage = error.message;
+  } finally {
+    state.authBusy = false;
+    if (!succeeded) {
+      render();
+    }
+  }
+}
+
+async function handleLogout() {
+  try {
+    await logout();
+  } catch {
+    // Local logout should still clear the UI if the server is unreachable.
+  }
+  setCurrentUser(null);
+  setRecords([]);
+  state.reviewRecordId = null;
+  state.lastRecordId = "";
+  localStorage.removeItem(LAST_RECORD_KEY);
+  state.authMessage = "已退出登录。";
+  navigate("login");
+}
+
+async function handleClick(event) {
   const routeTarget = event.target.closest("[data-route]");
   if (routeTarget) {
-    navigate(routeTarget.dataset.route);
+    const nextRoute = routeTarget.dataset.route;
+    if (isAuthRoute(nextRoute)) {
+      state.authMessage = "";
+    }
+    if (nextRoute.startsWith("detail/")) {
+      state.detailBackRoute = state.route && state.route !== "detail" ? getRoutePath() : "history";
+    }
+    navigate(nextRoute);
     return;
   }
 
@@ -818,6 +1229,7 @@ function handleClick(event) {
   if (filterTarget) {
     state.historyFilter = filterTarget.dataset.filter;
     state.dateMenuOpen = false;
+    state.calendarMonth = "";
     render();
     return;
   }
@@ -853,24 +1265,43 @@ function handleClick(event) {
 
   const action = actionTarget.dataset.action;
   if (action === "save-record") {
-    handleSaveRecord();
+    await handleSaveRecord();
   }
   if (action === "save-draft") {
     updateDraftFromForm();
     state.formMessage = "已暂存，等你准备好了再收藏。";
     render();
   }
+  if (action === "auth-submit") {
+    await handleAuthSubmit();
+  }
+  if (action === "logout") {
+    await handleLogout();
+  }
   if (action === "toggle-date-menu") {
     state.dateMenuOpen = !state.dateMenuOpen;
     render();
   }
+  if (action === "calendar-prev-month" && state.calendarMonth) {
+    state.calendarMonth = shiftMonth(state.calendarMonth, -1);
+    render();
+  }
+  if (action === "calendar-next-month" && state.calendarMonth) {
+    state.calendarMonth = shiftMonth(state.calendarMonth, 1);
+    render();
+  }
+  if (action === "detail-back") {
+    const backRoute = state.detailBackRoute || "history";
+    state.detailBackRoute = "";
+    navigate(backRoute);
+  }
   if (action === "random-review") {
-    const record = pickRandomRecord(loadRecords(), state.reviewRecordId);
+    const record = pickRandomRecord(state.records, state.reviewRecordId);
     state.reviewRecordId = record?.id || null;
     navigate("review");
   }
   if (action === "random-again") {
-    const record = pickRandomRecord(loadRecords(), state.reviewRecordId);
+    const record = pickRandomRecord(state.records, state.reviewRecordId);
     state.reviewRecordId = record?.id || null;
     render();
   }
@@ -890,6 +1321,9 @@ function handleInput(event) {
 window.addEventListener("hashchange", () => {
   state.formMessage = "";
   state.dateMenuOpen = false;
+  if (getRoute() !== "detail") {
+    state.detailBackRoute = "";
+  }
   render();
   scrollToPageTop();
 });
@@ -897,5 +1331,22 @@ window.addEventListener("hashchange", () => {
 app.addEventListener("click", handleClick);
 app.addEventListener("input", handleInput);
 
-render();
-scrollToPageTop();
+async function initializeApp() {
+  render();
+  try {
+    setCurrentUser(await getCurrentUser());
+    await refreshRecords();
+  } catch (error) {
+    setCurrentUser(null);
+    setRecords([]);
+    if (error.status !== 401) {
+      state.authMessage = "无法连接后端服务，请确认 FastAPI 已启动。";
+    }
+  } finally {
+    state.authChecked = true;
+    render();
+    scrollToPageTop();
+  }
+}
+
+initializeApp();
