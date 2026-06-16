@@ -26,7 +26,7 @@ const SUCCESS_MESSAGES = [
 
 function getDefaultApiBase() {
   const { protocol, hostname } = window.location;
-  if ((protocol === "http:" || protocol === "https:") && (hostname === "localhost" || hostname === "127.0.0.1")) {
+  if ((protocol === "http:" || protocol === "https:") && hostname) {
     return `${protocol}//${hostname}:8000`;
   }
   return "http://127.0.0.1:8000";
@@ -46,6 +46,7 @@ const state = {
   authMode: "login",
   authMessage: "",
   authBusy: false,
+  aiBusy: false,
   records: [],
   recordsLoading: false,
   dataMessage: "",
@@ -201,6 +202,14 @@ async function createAchievement(payload) {
   const data = await apiFetch("/api/achievements", {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+  return data.record;
+}
+
+async function createAchievementWithAi(content) {
+  const data = await apiFetch("/api/achievements/ai-create", {
+    method: "POST",
+    body: JSON.stringify({ content })
   });
   return data.record;
 }
@@ -771,6 +780,10 @@ function renderRecordPage() {
         </div>
 
         <div class="form-actions">
+          <button class="ai-btn" data-action="ai-save-record" type="button" ${state.aiBusy ? "disabled" : ""}>
+            ${icon("star")}
+            <span>${state.aiBusy ? "AI 正在分类..." : "AI 分类并收藏"}</span>
+          </button>
           <button class="primary-btn" data-action="save-record" type="button">
             ${icon("plus")}
             <span>收藏这份小成就</span>
@@ -1157,6 +1170,50 @@ async function handleSaveRecord() {
   }
 }
 
+async function handleAiSaveRecord() {
+  const draft = updateDraftFromForm();
+  const content = draft.content.trim();
+  if (!content) {
+    state.formMessage = "先写下一件值得庆祝的小事吧。";
+    render();
+    return;
+  }
+  if ([...content].length > 200) {
+    state.formMessage = "内容有点长，可以稍微简短一点。";
+    render();
+    return;
+  }
+
+  state.aiBusy = true;
+  state.formMessage = "AI 正在帮你确认分类...";
+  render();
+  let succeeded = false;
+  try {
+    const record = enrichRecord(await createAchievementWithAi(content));
+    setRecords([record, ...state.records]);
+    state.lastRecordId = record.id;
+    localStorage.setItem(LAST_RECORD_KEY, record.id);
+    clearDraft();
+    state.formMessage = "";
+    succeeded = true;
+    navigate("completion");
+  } catch (error) {
+    if (error.status === 401) {
+      setCurrentUser(null);
+      setRecords([]);
+      state.authMessage = "登录已失效，请重新登录。";
+      navigate("login");
+      return;
+    }
+    state.formMessage = error.message;
+  } finally {
+    state.aiBusy = false;
+    if (!succeeded && state.route === "record") {
+      render();
+    }
+  }
+}
+
 function getAuthField(name) {
   return app.querySelector(`[data-auth-field="${name}"]`)?.value.trim() || "";
 }
@@ -1266,6 +1323,9 @@ async function handleClick(event) {
   const action = actionTarget.dataset.action;
   if (action === "save-record") {
     await handleSaveRecord();
+  }
+  if (action === "ai-save-record") {
+    await handleAiSaveRecord();
   }
   if (action === "save-draft") {
     updateDraftFromForm();

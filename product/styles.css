@@ -240,6 +240,7 @@ button:disabled {
 .primary-btn,
 .secondary-btn,
 .outline-btn,
+.ai-btn,
 .ghost-btn {
   display: inline-flex;
   align-items: center;
@@ -267,6 +268,17 @@ button:disabled {
   border: 1.5px solid #c8a98a;
   color: var(--blue);
   background: transparent;
+}
+
+.ai-btn {
+  border: 1.5px solid rgba(23, 47, 84, 0.24);
+  color: #fffaf1;
+  background: linear-gradient(180deg, #24456d 0%, var(--blue) 100%);
+  box-shadow: 0 10px 20px rgba(23, 47, 84, 0.16);
+}
+
+.ai-btn:active {
+  transform: translateY(1px);
 }
 
 .outline-btn {
@@ -1437,6 +1449,7 @@ button:disabled {
 
   .primary-btn,
   .secondary-btn,
+  .ai-btn,
   .outline-btn {
     min-height: 54px;
     font-size: 17px;
