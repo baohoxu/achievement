@@ -77,7 +77,10 @@ export LOG_FILE=server/logs/app.log
 
 ## 启动前端
 
-前端可以单独用静态服务器启动：
+前端默认使用同源接口路径 `/api/...`。在线上部署时，需要由 Nginx 托管 `product/`
+静态文件，并把 `/api/` 反向代理到本机 FastAPI 服务。
+
+如果只是本地预览页面，可以单独用静态服务器启动：
 
 ```bash
 python3 -m http.server 5173 -d product
@@ -89,9 +92,66 @@ python3 -m http.server 5173 -d product
 http://127.0.0.1:5173
 ```
 
-本地开发时，前端和后端尽量使用同一个 hostname。比如打开 `http://127.0.0.1:5173`
-时，前端会请求 `http://127.0.0.1:8000`；打开 `http://localhost:5173` 时，前端会请求
-`http://localhost:8000`。这样登录 Cookie 才能在后续 API 请求里正常携带。
+这种方式只负责静态页面预览；需要接口联调时，请使用本地 Nginx 反代，或者在页面加载
+`app.js` 前临时设置 `window.ACHIEVEMENT_API_BASE` 指向后端地址。部署到 ECS 的版本不要设置
+这个变量，让前端直接请求 `/api/...`。
+
+## ECS 部署要点
+
+推荐部署结构：
+
+```text
+/var/www/product/  # 放 product 目录下的静态文件
+/opt/backend/      # 放 server 目录下的后端文件
+```
+
+如果把 `server` 目录里的文件直接上传到 `/opt/backend/`，后端启动命令是：
+
+```bash
+cd /opt/backend
+source venv/bin/activate
+uvicorn main:app --host 127.0.0.1 --port 8000
+```
+
+如果上传后路径是 `/opt/backend/server/main.py`，启动命令应改成：
+
+```bash
+cd /opt/backend
+source venv/bin/activate
+uvicorn server.main:app --host 127.0.0.1 --port 8000
+```
+
+Nginx 配置示例：
+
+```nginx
+server {
+    listen 80;
+    server_name _;
+
+    root /var/www/product;
+    index index.html;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+部署后先检查：
+
+```bash
+curl http://127.0.0.1:8000/api/health
+curl http://127.0.0.1/api/health
+curl http://120.26.58.145/api/health
+```
 
 ## 手机访问同一局域网服务
 
@@ -108,10 +168,11 @@ python3 -m http.server 5173 -d product --bind 0.0.0.0
 http://10.162.63.83:5173
 ```
 
-前端会自动请求：
+如果没有额外配置同源反代，前端仍会请求当前页面同源下的 `/api/...`，因此手机联调也建议
+走 Nginx 反代。
 
 ```text
-http://10.162.63.83:8000
+http://10.162.63.83/api/health
 ```
 
 后端默认允许常见局域网地址访问，包括 `10.x.x.x`、`192.168.x.x` 和

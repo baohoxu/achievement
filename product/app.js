@@ -2,7 +2,7 @@ const app = document.getElementById("app");
 
 const DRAFT_KEY = "achievement-box.draft.v02";
 const LAST_RECORD_KEY = "achievement-box.last-record.v02";
-const API_BASE = window.ACHIEVEMENT_API_BASE || getDefaultApiBase();
+const API_BASE = normalizeApiBase(window.ACHIEVEMENT_API_BASE || "");
 
 const CATEGORIES = ["学习/工作", "生活自律", "情绪管理", "人际关系", "小幸运"];
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
@@ -24,12 +24,8 @@ const SUCCESS_MESSAGES = [
   "这不是普通的一条记录，是你给自己的温柔确认。"
 ];
 
-function getDefaultApiBase() {
-  const { protocol, hostname } = window.location;
-  if ((protocol === "http:" || protocol === "https:") && hostname) {
-    return `${protocol}//${hostname}:8000`;
-  }
-  return "http://127.0.0.1:8000";
+function normalizeApiBase(value) {
+  return String(value || "").replace(/\/+$/, "");
 }
 
 const state = {
