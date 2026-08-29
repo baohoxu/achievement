@@ -139,6 +139,10 @@ class AchievementCreateRequest(BaseModel):
   category: str
 
 
+class AchievementUpdateRequest(BaseModel):
+  content: str
+
+
 class AchievementAiCreateRequest(BaseModel):
   content: str
 
@@ -634,3 +638,83 @@ def get_achievement(
   if not record:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="没有找到这条记录。")
   return {"record": serialize_achievement(record)}
+
+
+@app.patch("/api/achievements/{achievement_id}")
+def update_achievement(
+  achievement_id: int,
+  payload: AchievementUpdateRequest,
+  user=Depends(current_user),
+  connection=Depends(get_db),
+) -> dict[str, dict[str, Any]]:
+  content = validate_ai_content(payload.content)
+  cursor = connection.cursor(dictionary=True)
+  cursor.execute(
+    """
+    SELECT id
+    FROM achievements
+    WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+    """,
+    (achievement_id, user["id"]),
+  )
+  if not cursor.fetchone():
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="没有找到这条记录。")
+
+  cursor.execute(
+    """
+    UPDATE achievements
+    SET content = %s
+    WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+    """,
+    (content, achievement_id, user["id"]),
+  )
+  connection.commit()
+  cursor.execute(
+    """
+    SELECT id, content, category, created_at, updated_at
+    FROM achievements
+    WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+    """,
+    (achievement_id, user["id"]),
+  )
+  record = cursor.fetchone()
+  if not record:
+    connection.rollback()
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="没有找到这条记录。")
+  logger.info(
+    "achievement.update user_id=%s record_id=%s content_len=%s",
+    user["id"],
+    achievement_id,
+    len(content),
+  )
+  return {"record": serialize_achievement(record)}
+
+
+@app.delete("/api/achievements/{achievement_id}")
+def delete_achievement(
+  achievement_id: int,
+  user=Depends(current_user),
+  connection=Depends(get_db),
+) -> dict[str, bool]:
+  started_at = time.perf_counter()
+  cursor = connection.cursor()
+  cursor.execute(
+    """
+    UPDATE achievements
+    SET deleted_at = CURRENT_TIMESTAMP
+    WHERE id = %s AND user_id = %s AND deleted_at IS NULL
+    """,
+    (achievement_id, user["id"]),
+  )
+  if cursor.rowcount == 0:
+    connection.rollback()
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="没有找到这条记录。")
+
+  connection.commit()
+  logger.info(
+    "achievement.delete user_id=%s record_id=%s duration_ms=%.1f",
+    user["id"],
+    achievement_id,
+    (time.perf_counter() - started_at) * 1000,
+  )
+  return {"ok": True}

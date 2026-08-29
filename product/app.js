@@ -7,6 +7,9 @@ const API_BASE = normalizeApiBase(window.ACHIEVEMENT_API_BASE || "");
 const CATEGORIES = ["学习/工作", "生活自律", "情绪管理", "人际关系", "小幸运"];
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
 const AUTH_ROUTES = ["login", "register"];
+const SWIPE_ACTION_WIDTH = 88;
+const SWIPE_OPEN_THRESHOLD = 44;
+const SWIPE_DIRECTION_THRESHOLD = 8;
 
 const FEEDBACK_MESSAGES = [
   "每一次开始，都是未来的伏笔。",
@@ -43,10 +46,19 @@ const state = {
   authMessage: "",
   authBusy: false,
   aiBusy: false,
+  detailEditMode: false,
+  detailDraft: null,
+  detailBusy: false,
+  detailMessage: "",
   records: [],
   recordsLoading: false,
   dataMessage: "",
-  lastRecordId: localStorage.getItem(LAST_RECORD_KEY) || ""
+  lastRecordId: localStorage.getItem(LAST_RECORD_KEY) || "",
+  openSwipeRecordId: "",
+  deletingRecordId: "",
+  historyMessage: "",
+  swipeGesture: null,
+  suppressHistoryClick: null
 };
 
 if ("scrollRestoration" in history) {
@@ -71,6 +83,7 @@ function icon(name, className = "icon") {
     bookmark: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 3.8h12v17l-6-3.6-6 3.6z"/></svg>`,
     notebook: `<svg viewBox="0 0 24 24" ${common}><path d="M8 4h10a2 2 0 0 1 2 2v16H8a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z"/><path d="M8 4v18"/><path d="M4.7 9H8"/><path d="M4.7 14H8"/></svg>`,
     edit: `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 17.7 4 21l3.3-1 11-11-3.2-3.2z"/><path d="m16.2 4.7 1.2-1.2a1.8 1.8 0 0 1 2.5 0l.6.6a1.8 1.8 0 0 1 0 2.5l-1.2 1.2z"/></svg>`,
+    trash: `<svg viewBox="0 0 24 24" ${common}><path d="M4.5 7h15"/><path d="M9 7V4.5h6V7"/><path d="m7 7 .8 13h8.4L17 7"/><path d="M10 10.5v6"/><path d="M14 10.5v6"/></svg>`,
     clock: `<svg viewBox="0 0 24 24" ${common}><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5l3.2 2"/></svg>`,
     back: `<svg viewBox="0 0 24 24" ${common}><path d="M19 12H5"/><path d="m12 5-7 7 7 7"/></svg>`,
     chevron: `<svg viewBox="0 0 24 24" ${common}><path d="m9 5 7 7-7 7"/></svg>`,
@@ -212,6 +225,20 @@ async function createAchievementWithAi(content) {
 
 async function fetchAchievementDetail(id) {
   const data = await apiFetch(`/api/achievements/${encodeURIComponent(id)}`);
+  return data.record;
+}
+
+async function deleteAchievement(id) {
+  return apiFetch(`/api/achievements/${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+}
+
+async function updateAchievement(id, content) {
+  const data = await apiFetch(`/api/achievements/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ content })
+  });
   return data.record;
 }
 
@@ -548,11 +575,14 @@ function successMessageFor(record) {
   return SUCCESS_MESSAGES[code % SUCCESS_MESSAGES.length];
 }
 
-function pageHeader(title, kicker, dark = false) {
+function pageHeader(title, kicker, dark = false, actions = "") {
   return `
     <header class="page-header">
-      <div>
-        <h1 class="page-title">${title}</h1>
+      <div class="page-header-copy">
+        <div class="page-title-row">
+          <h1 class="page-title">${title}</h1>
+          ${actions}
+        </div>
         <p class="page-kicker">${kicker}</p>
       </div>
       ${
@@ -859,6 +889,7 @@ function renderHistory(records) {
   return `
     <section class="page">
       ${pageHeader("历史记录", "回看那些被认真收藏的小成就")}
+      ${state.historyMessage ? `<p class="toast">${escapeHtml(state.historyMessage)}</p>` : ""}
       <div class="history-toolbar">
         <div class="filter-row" role="tablist" aria-label="分类筛选">
           ${["全部", ...CATEGORIES]
@@ -910,8 +941,29 @@ function renderHistory(records) {
                       ${groups[date]
                         .map(
                           (record) => `
-                            <article class="history-item">
-                              <button class="history-link" data-route="detail/${encodeURIComponent(record.id)}" type="button">
+                            <article class="history-item ${state.openSwipeRecordId === record.id ? "is-swipe-open" : ""}" data-record-id="${escapeHtml(record.id)}">
+                              <div class="history-delete-layer">
+                                <button
+                                  class="history-delete-button"
+                                  data-action="delete-record"
+                                  data-record-id="${escapeHtml(record.id)}"
+                                  type="button"
+                                  aria-label="删除记录：${escapeHtml(record.content)}"
+                                  aria-hidden="${state.openSwipeRecordId === record.id ? "false" : "true"}"
+                                  tabindex="${state.openSwipeRecordId === record.id ? "0" : "-1"}"
+                                  ${state.deletingRecordId === record.id ? "disabled" : ""}
+                                >
+                                  ${icon("trash")}
+                                  <span>删除</span>
+                                </button>
+                              </div>
+                              <button
+                                class="history-link"
+                                data-route="detail/${encodeURIComponent(record.id)}"
+                                data-record-id="${escapeHtml(record.id)}"
+                                type="button"
+                                aria-expanded="${state.openSwipeRecordId === record.id ? "true" : "false"}"
+                              >
                                 ${roundCategoryIcon(record.category)}
                                 <span class="history-main">
                                   <span class="history-content" title="${escapeHtml(record.content)}">${escapeHtml(record.content)}</span>
@@ -941,6 +993,23 @@ function renderHistory(records) {
 function renderRecordDetail(records) {
   const recordId = getDetailRecordId();
   const record = records.find((item) => item.id === recordId);
+  const detailActions = record
+    ? `
+        <button
+          class="detail-delete-button"
+          data-action="delete-detail"
+          data-record-id="${escapeHtml(record.id)}"
+          type="button"
+          aria-label="删除这条成就记录"
+          title="删除记录"
+          ${state.deletingRecordId === record.id || state.detailBusy ? "disabled" : ""}
+        >
+          ${icon("trash")}
+          <span>删除</span>
+        </button>
+      `
+    : "";
+  const draft = state.detailDraft === null ? record?.content || "" : state.detailDraft;
   return `
     <section class="page">
       <div class="detail-topbar">
@@ -949,7 +1018,8 @@ function renderRecordDetail(records) {
           <span>返回</span>
         </button>
       </div>
-      ${pageHeader("成就详情", "完整看见这件值得庆祝的小事")}
+      ${pageHeader("成就详情", "完整看见这件值得庆祝的小事", false, detailActions)}
+      ${state.detailMessage ? `<p class="toast">${escapeHtml(state.detailMessage)}</p>` : ""}
       ${
         record
           ? `
@@ -960,8 +1030,34 @@ function renderRecordDetail(records) {
                   <p class="detail-kicker">${record.category}</p>
                   <h2 class="detail-title">这是一件值得庆祝的小事</h2>
                 </div>
+                ${
+                  state.detailEditMode
+                    ? ""
+                    : `
+                      <button class="detail-edit-button" data-action="edit-detail" type="button" aria-label="编辑成就内容" title="编辑内容">
+                        ${icon("edit")}
+                        <span>编辑</span>
+                      </button>
+                    `
+                }
               </div>
-              <p class="detail-content">${escapeHtml(record.content)}</p>
+              ${
+                state.detailEditMode
+                  ? `
+                    <textarea class="detail-edit-textarea" data-field="detail-content" maxlength="200">${escapeHtml(draft)}</textarea>
+                    <div class="detail-edit-footer">
+                      <span class="detail-edit-count">${[...draft].length}/200</span>
+                      <div class="detail-edit-actions">
+                        <button class="primary-btn" data-action="save-detail" type="button" ${state.detailBusy ? "disabled" : ""}>
+                          ${icon("check")}
+                          <span>${state.detailBusy ? "保存中..." : "保存修改"}</span>
+                        </button>
+                        <button class="secondary-btn" data-action="cancel-detail" type="button" ${state.detailBusy ? "disabled" : ""}>取消</button>
+                      </div>
+                    </div>
+                  `
+                  : `<p class="detail-content">${escapeHtml(record.content)}</p>`
+              }
               <div class="detail-meta-grid">
                 <div class="detail-meta-item">
                   <span>记录日期</span>
@@ -1264,7 +1360,260 @@ async function handleLogout() {
   navigate("login");
 }
 
+function findHistoryItem(recordId) {
+  return [...app.querySelectorAll(".history-item")].find((item) => item.dataset.recordId === recordId) || null;
+}
+
+function updateHistoryItemVisual(item, { offset = 0, open = false, dragging = false } = {}) {
+  if (!item) return;
+  const link = item.querySelector(".history-link");
+  const deleteButton = item.querySelector(".history-delete-button");
+  if (link) {
+    link.style.setProperty("--swipe-offset", `${offset}px`);
+    link.classList.toggle("is-swiping", dragging);
+  }
+  item.classList.toggle("is-swipe-open", open);
+  item.classList.toggle("is-swipe-dragging", dragging);
+  if (deleteButton) {
+    deleteButton.setAttribute("aria-hidden", open ? "false" : "true");
+    deleteButton.tabIndex = open ? 0 : -1;
+  }
+}
+
+function releaseHistoryPointerCapture(link, pointerId) {
+  if (link?.hasPointerCapture?.(pointerId)) {
+    link.releasePointerCapture(pointerId);
+  }
+}
+
+function closeOpenSwipeItem() {
+  if (!state.openSwipeRecordId) return;
+  const item = findHistoryItem(state.openSwipeRecordId);
+  state.openSwipeRecordId = "";
+  updateHistoryItemVisual(item, { offset: 0 });
+}
+
+function historyItemFromEvent(event) {
+  const target = event.target instanceof Element ? event.target : null;
+  const item = target?.closest(".history-item");
+  const link = target?.closest(".history-link");
+  if (!item || !link || !app.contains(item)) return null;
+  return { item, link, recordId: item.dataset.recordId };
+}
+
+function handlePointerDown(event) {
+  if (event.button !== 0) return;
+  const target = event.target instanceof Element ? event.target : null;
+  if (target?.closest("[data-action='delete-record']")) return;
+
+  const historyItem = historyItemFromEvent(event);
+  if (!historyItem) {
+    closeOpenSwipeItem();
+    return;
+  }
+
+  if (state.openSwipeRecordId && state.openSwipeRecordId !== historyItem.recordId) {
+    closeOpenSwipeItem();
+  }
+
+  state.swipeGesture = {
+    pointerId: event.pointerId,
+    recordId: historyItem.recordId,
+    startX: event.clientX,
+    startY: event.clientY,
+    startOffset: state.openSwipeRecordId === historyItem.recordId ? -SWIPE_ACTION_WIDTH : 0,
+    dragging: false
+  };
+  historyItem.link.setPointerCapture?.(event.pointerId);
+  updateHistoryItemVisual(historyItem.item, {
+    offset: state.swipeGesture.startOffset,
+    open: state.openSwipeRecordId === historyItem.recordId,
+    dragging: false
+  });
+}
+
+function handlePointerMove(event) {
+  const gesture = state.swipeGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+  const dx = event.clientX - gesture.startX;
+  const dy = event.clientY - gesture.startY;
+  if (!gesture.dragging) {
+    if (Math.abs(dx) < SWIPE_DIRECTION_THRESHOLD && Math.abs(dy) < SWIPE_DIRECTION_THRESHOLD) return;
+    if (Math.abs(dy) > Math.abs(dx)) {
+      const item = findHistoryItem(gesture.recordId);
+      updateHistoryItemVisual(item, {
+        offset: gesture.startOffset,
+        open: state.openSwipeRecordId === gesture.recordId,
+        dragging: false
+      });
+      releaseHistoryPointerCapture(item?.querySelector(".history-link"), event.pointerId);
+      state.swipeGesture = null;
+      return;
+    }
+    gesture.dragging = true;
+  }
+
+  event.preventDefault();
+  const offset = Math.max(-SWIPE_ACTION_WIDTH, Math.min(0, gesture.startOffset + dx));
+  const item = findHistoryItem(gesture.recordId);
+  updateHistoryItemVisual(item, { offset, dragging: true });
+}
+
+function finishPointerGesture(event, cancelled = false) {
+  const gesture = state.swipeGesture;
+  if (!gesture || gesture.pointerId !== event.pointerId) return;
+
+  const item = findHistoryItem(gesture.recordId);
+  if (gesture.dragging) {
+    event.preventDefault();
+    const link = item?.querySelector(".history-link");
+    const offset = cancelled
+      ? gesture.startOffset
+      : Number.parseFloat(link?.style.getPropertyValue("--swipe-offset") || "0");
+    const open = cancelled
+      ? state.openSwipeRecordId === gesture.recordId
+      : offset <= -SWIPE_OPEN_THRESHOLD;
+    state.openSwipeRecordId = open ? gesture.recordId : "";
+    state.suppressHistoryClick = {
+      recordId: gesture.recordId,
+      expiresAt: Date.now() + 350
+    };
+    state.swipeGesture = null;
+    releaseHistoryPointerCapture(link, event.pointerId);
+    render();
+    return;
+  }
+
+  state.swipeGesture = null;
+}
+
+async function handleDeleteRecord(recordId, { redirectRoute = "", messageKey = "historyMessage" } = {}) {
+  if (!recordId || state.deletingRecordId) return;
+
+  state.deletingRecordId = recordId;
+  state[messageKey] = "";
+  let redirected = false;
+  render();
+  try {
+    await deleteAchievement(recordId);
+    state.records = state.records.filter((record) => record.id !== recordId);
+    if (state.lastRecordId === recordId) {
+      state.lastRecordId = "";
+      localStorage.removeItem(LAST_RECORD_KEY);
+    }
+    if (state.reviewRecordId === recordId) {
+      state.reviewRecordId = null;
+    }
+    state.openSwipeRecordId = "";
+    state.detailEditMode = false;
+    state.detailDraft = null;
+    if (redirectRoute) {
+      redirected = true;
+      navigate(redirectRoute);
+    }
+  } catch (error) {
+    if (error.status === 401) {
+      setCurrentUser(null);
+      setRecords([]);
+      state.openSwipeRecordId = "";
+      state.authMessage = "登录已失效，请重新登录。";
+      navigate("login");
+      return;
+    }
+    state[messageKey] = error.message;
+    if (messageKey === "historyMessage") {
+      state.openSwipeRecordId = recordId;
+    }
+  } finally {
+    state.deletingRecordId = "";
+    if (!redirected && (state.route === "history" || state.route === "detail")) {
+      render();
+    }
+  }
+}
+
+function startDetailEdit() {
+  const record = state.records.find((item) => item.id === getDetailRecordId());
+  if (!record) return;
+  state.detailDraft = record.content;
+  state.detailEditMode = true;
+  state.detailMessage = "";
+  render();
+}
+
+function cancelDetailEdit() {
+  state.detailEditMode = false;
+  state.detailDraft = null;
+  state.detailMessage = "";
+  render();
+}
+
+async function handleSaveDetail() {
+  const recordId = getDetailRecordId();
+  const content = String(state.detailDraft ?? "").trim();
+  if (!content) {
+    state.detailMessage = "先写下一件值得庆祝的小事吧。";
+    render();
+    return;
+  }
+  if ([...content].length > 200) {
+    state.detailMessage = "内容有点长，可以稍微简短一点。";
+    render();
+    return;
+  }
+
+  state.detailBusy = true;
+  state.detailMessage = "";
+  render();
+  try {
+    const updated = enrichRecord(await updateAchievement(recordId, content));
+    state.records = state.records.map((record) => (record.id === recordId ? updated : record));
+    state.detailEditMode = false;
+    state.detailDraft = null;
+  } catch (error) {
+    if (error.status === 401) {
+      setCurrentUser(null);
+      setRecords([]);
+      state.authMessage = "登录已失效，请重新登录。";
+      navigate("login");
+      return;
+    }
+    state.detailMessage = error.message;
+  } finally {
+    state.detailBusy = false;
+    if (state.route === "detail") {
+      render();
+    }
+  }
+}
+
 async function handleClick(event) {
+  if (state.suppressHistoryClick) {
+    const suppressedClick = state.suppressHistoryClick;
+    state.suppressHistoryClick = null;
+    const target = event.target instanceof Element ? event.target : null;
+    const item = target?.closest(".history-item");
+    if (Date.now() <= suppressedClick.expiresAt && item?.dataset.recordId === suppressedClick.recordId) {
+      event.preventDefault();
+      return;
+    }
+  }
+
+  const deleteTarget = event.target.closest("[data-action='delete-record'], [data-action='delete-detail']");
+  if (deleteTarget) {
+    event.preventDefault();
+    if (deleteTarget.dataset.action === "delete-detail") {
+      await handleDeleteRecord(deleteTarget.dataset.recordId, {
+        redirectRoute: "history",
+        messageKey: "detailMessage"
+      });
+    } else {
+      await handleDeleteRecord(deleteTarget.dataset.recordId);
+    }
+    return;
+  }
+
   const routeTarget = event.target.closest("[data-route]");
   if (routeTarget) {
     const nextRoute = routeTarget.dataset.route;
@@ -1283,6 +1632,8 @@ async function handleClick(event) {
     state.historyFilter = filterTarget.dataset.filter;
     state.dateMenuOpen = false;
     state.calendarMonth = "";
+    state.historyMessage = "";
+    state.openSwipeRecordId = "";
     render();
     return;
   }
@@ -1317,6 +1668,15 @@ async function handleClick(event) {
   if (!actionTarget) return;
 
   const action = actionTarget.dataset.action;
+  if (action === "edit-detail") {
+    startDetailEdit();
+  }
+  if (action === "cancel-detail") {
+    cancelDetailEdit();
+  }
+  if (action === "save-detail") {
+    await handleSaveDetail();
+  }
   if (action === "save-record") {
     await handleSaveRecord();
   }
@@ -1364,6 +1724,16 @@ async function handleClick(event) {
 }
 
 function handleInput(event) {
+  if (event.target.matches("[data-field='detail-content']")) {
+    const value = event.target.value;
+    state.detailDraft = value;
+    const counter = app.querySelector(".detail-edit-count");
+    if (counter) {
+      counter.textContent = `${[...value].length}/200`;
+      counter.style.color = [...value].length > 200 ? "var(--red)" : "";
+    }
+    return;
+  }
   if (!event.target.matches("[data-field='content']")) return;
   const value = event.target.value;
   const counter = app.querySelector("#content-count");
@@ -1377,6 +1747,14 @@ function handleInput(event) {
 window.addEventListener("hashchange", () => {
   state.formMessage = "";
   state.dateMenuOpen = false;
+  state.openSwipeRecordId = "";
+  state.swipeGesture = null;
+  state.suppressHistoryClick = null;
+  state.historyMessage = "";
+  state.detailEditMode = false;
+  state.detailDraft = null;
+  state.detailBusy = false;
+  state.detailMessage = "";
   if (getRoute() !== "detail") {
     state.detailBackRoute = "";
   }
@@ -1386,6 +1764,10 @@ window.addEventListener("hashchange", () => {
 
 app.addEventListener("click", handleClick);
 app.addEventListener("input", handleInput);
+app.addEventListener("pointerdown", handlePointerDown);
+app.addEventListener("pointermove", handlePointerMove, { passive: false });
+app.addEventListener("pointerup", (event) => finishPointerGesture(event));
+app.addEventListener("pointercancel", (event) => finishPointerGesture(event, true));
 
 async function initializeApp() {
   render();

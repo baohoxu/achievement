@@ -82,6 +82,22 @@ button:disabled {
   margin: 0 4px 24px;
 }
 
+.page-header-copy {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.page-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.page-title-row .page-title {
+  min-width: 0;
+}
+
 .page-kicker {
   margin: 0;
   color: var(--muted);
@@ -997,6 +1013,8 @@ button:disabled {
 }
 
 .history-item {
+  --history-action-width: 88px;
+  position: relative;
   overflow: hidden;
   border: 1px solid rgba(234, 216, 196, 0.78);
   border-radius: 14px;
@@ -1012,28 +1030,92 @@ button:disabled {
   min-width: 0;
 }
 
+.history-delete-layer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--red);
+}
+
+.history-delete-button {
+  display: flex;
+  flex: 0 0 var(--history-action-width);
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: var(--history-action-width);
+  min-height: 100%;
+  padding: 0 8px;
+  color: #fffaf1;
+  background: var(--red);
+  font-size: 14px;
+  font-weight: 700;
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.16s ease, background 0.16s ease;
+}
+
+.history-delete-button .icon {
+  width: 19px;
+  height: 19px;
+}
+
+.history-delete-button:hover,
+.history-delete-button:focus-visible {
+  outline: none;
+  background: var(--red-dark);
+}
+
+.history-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.history-item.is-swipe-open .history-delete-button,
+.history-item.is-swipe-dragging .history-delete-button {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+}
+
 .history-link {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
+  position: relative;
+  z-index: 1;
   width: 100%;
   min-height: 78px;
   padding: 14px;
   color: inherit;
-  background: transparent;
+  background: var(--card-strong);
   text-align: left;
-  transition: background 0.18s ease, transform 0.18s ease;
+  --swipe-offset: 0px;
+  transform: translateX(var(--swipe-offset));
+  touch-action: pan-y;
+  transition: background 0.18s ease, transform 0.22s ease;
+}
+
+.history-link.is-swiping {
+  user-select: none;
+  transition: none;
+}
+
+.history-item.is-swipe-open .history-link {
+  --swipe-offset: calc(-1 * var(--history-action-width));
 }
 
 .history-link:hover,
 .history-link:focus-visible {
   outline: none;
-  background: rgba(246, 235, 221, 0.62);
+  background: #f6ebdd;
 }
 
 .history-link:active {
-  transform: translateY(1px);
+  transform: translate(var(--swipe-offset), 1px);
 }
 
 .history-content {
@@ -1100,7 +1182,7 @@ button:disabled {
 
 .detail-heading {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 16px;
   margin-bottom: 22px;
@@ -1126,6 +1208,53 @@ button:disabled {
   line-height: 1.3;
 }
 
+.detail-delete-button,
+.detail-edit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid rgba(191, 47, 63, 0.24);
+  border-radius: 10px;
+  color: var(--red);
+  background: rgba(255, 250, 242, 0.94);
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.detail-delete-button .icon,
+.detail-edit-button .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.detail-delete-button:hover,
+.detail-delete-button:focus-visible {
+  outline: none;
+  color: #fffaf1;
+  background: var(--red);
+}
+
+.detail-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.detail-edit-button {
+  border-color: rgba(23, 47, 84, 0.18);
+  color: var(--blue);
+}
+
+.detail-edit-button:hover,
+.detail-edit-button:focus-visible {
+  outline: none;
+  color: #fffaf1;
+  background: var(--blue);
+}
+
 .detail-content {
   margin: 0;
   padding: 22px 0;
@@ -1136,6 +1265,48 @@ button:disabled {
   line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+
+.detail-edit-textarea {
+  display: block;
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  padding: 16px;
+  border: 1px solid rgba(218, 198, 176, 0.9);
+  border-radius: 14px;
+  color: #20344f;
+  background: #fffdf8;
+  font-size: 18px;
+  line-height: 1.65;
+  outline: none;
+}
+
+.detail-edit-textarea:focus {
+  border-color: rgba(23, 47, 84, 0.48);
+  box-shadow: 0 0 0 3px rgba(23, 47, 84, 0.08);
+}
+
+.detail-edit-footer {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.detail-edit-count {
+  color: var(--muted);
+  font-size: 13px;
+  text-align: right;
+}
+
+.detail-edit-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.detail-edit-actions > button {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .detail-meta-grid {
